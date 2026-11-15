@@ -503,21 +503,25 @@ def _extract_raw_svgs(text: str) -> Tuple[str, List[str]]:
 
 def _is_valid_inline_math(content: str, char_after: str) -> bool:
     r"""
-    精准区分 `$x_1$` / `$ 16\Psi $` 与货币金额 `$2.5 ... $10`：
+    精准区分 `$x_1$` / `$ 16\Psi $` / `$4$` 与货币金额 `$2.5 ... $10`：
+    - 禁止跨行或吞入占位符
     - 闭定界符紧接数字 -> 拒判（货币成对出现）
+    - 纯数字仅在紧贴 `$...$` 定界符（首尾无空白）时放行
     - 剥离 \text{} 等文字容器后若仍含中文且缺少 LaTeX 数学结构 -> 拒判
     """
     if not content or not content.strip():
         return False
-    if "\n\n" in content:
+    if "\n" in content:
         return False
     if char_after and char_after.isdigit():
         return False
+    if re.search(r"@@(?:MATH_BLOCK|MATH_INLINE|RAW_SVG|CODE_BLOCK|INLINE_CODE)_\d+@@", content):
+        return False
 
     stripped = content.strip()
-    # 纯数字（如 $100$ 几乎不会是公式，除非前后无货币特征；其实 $100 单独一个不会匹配）
-    if re.fullmatch(r"\d+(?:[.,]\d+)?", stripped):
-        return False
+    # 紧贴边界的纯数字公式（如 $4$、$65,504$）放行；带空白（如 $ 100 $）按货币拒判
+    if re.fullmatch(r"\d+(?:[.,]\d+)*", stripped):
+        return not content[0].isspace() and not content[-1].isspace()
 
     # 剥离 \text{...}, \mathrm{...}, \mathbf{...}, \operatorname{...} 检查裸文本
     core = re.sub(r"\\(?:text|mathrm|mathbf|operatorname)\{[^{}]*\}", "", stripped)
@@ -583,29 +587,25 @@ def _extract_math_expressions(text: str) -> Tuple[str, List[Tuple[str, bool]]]:
 
     protected = re.sub(r"\\\((.*?)\\\)", _paren_inline_repl, protected, flags=re.S)
 
-    # 4. 逐字符扫描提取 $...$ 行内公式（不跨换行或仅限同一段落，稳妥起见允许单行及同段落）
+    # 4. 逐字符扫描提取 $...$ 行内公式（严格单行，禁止跨行及吞入占位符）
+    placeholder_re = re.compile(r"@@(?:MATH_BLOCK|MATH_INLINE|RAW_SVG|CODE_BLOCK|INLINE_CODE)_\d+@@")
     out: List[str] = []
     i = 0
     n = len(protected)
     while i < n:
         if protected[i] == "$":
-            # 向后在同一段落内寻找闭合 $
+            # 向后在同一行内寻找闭合 $
             j = i + 1
             found = -1
             while j < n:
                 if protected[j] == "\n":
-                    # 行内公式一般不跨行；允许单个软换行但绝不跨空行
-                    if j + 1 < n and protected[j + 1] == "\n":
-                        break
+                    break
                 if protected[j] == "$":
                     cand = protected[i + 1:j]
                     char_after = protected[j + 1] if j + 1 < n else ""
-                    if _is_valid_inline_math(cand, char_after):
+                    if not placeholder_re.search(cand) and _is_valid_inline_math(cand, char_after):
                         found = j
-                        break
-                    else:
-                        # 这个 $ 不是合法数学闭合，放弃本次开头 $
-                        break
+                    break
                 j += 1
             if found != -1:
                 tex = protected[i + 1:found].strip()
