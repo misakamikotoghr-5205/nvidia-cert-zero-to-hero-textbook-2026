@@ -1,0 +1,19 @@
+# Python bytecode & cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Visual QC & rendered PDF outputs
+qc_pages/
+*.pdf
+*.raw.pdf
+
+# Intermediate split drafts for Chapter 18
+_ch18_part_*.md
+
+# Node.js / offline KaTeX dependencies
+node_modules/
+
+# OS / editor artifacts
+.DS_Store
